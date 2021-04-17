@@ -1,0 +1,154 @@
+---
+title: "DS 202 Lab 5"
+author: "Emma Smykalski"
+date: "4/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE, comment=FALSE, warning=FALSE, message = FALSE}
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(ggrepel)
+library(plotly)
+
+acc <- read.csv("https://raw.githubusercontent.com/xdaiISU/ds202materials/master/hwlabs/fars2017/accident.csv", stringsAsFactors = FALSE)
+pers <- read.csv("https://raw.githubusercontent.com/xdaiISU/ds202materials/master/hwlabs/fars2017/person.csv", stringsAsFactors = FALSE)
+
+```
+
+## 1)  
+From this summary, we can see that Saturday and Sunday have the most accidents. n stands for the number of accidents on those days.  
+```{r}
+acc %>% group_by(wday(DAY_WEEK, label=TRUE)) %>%
+  summarize(n=n()) %>% arrange(desc(n))
+```
+
+## 2)  
+```{r}
+fatal <- pers %>% filter(INJ_SEV == 4) 
+head(fatal)
+```
+
+## 3)  
+```{r}
+dang <- fatal %>% group_by(STATE, MAKE) %>%
+  summarize(n=n()) %>% na.omit() %>%
+  arrange(STATE, desc(n))
+
+make <- dang %>% group_by(STATE) %>% filter(n==max(n)) %>%
+  summarize(STATE, MAKE)
+
+make 
+```
+
+## 4)  
+To look at the most dangerous vehicle in each state we first have to define what the most dangerous vehicle is. I described it as the make that had the most fatalities in it per state. In the map you can see that make 12 and 20 were very popular dangerous vehicles. Looking at the manual I see that 12 is Ford and 20 is Chevrolet so those two are the most dangerous types of vehicles in the majority of the states.  
+```{r, warning=FALSE}
+states <- map_data('state')
+
+codes <- readxl::read_xlsx("C:/Users/esmyk/Downloads/FRPP_GLC_-_United_StATESaPRIL62021.xlsx")
+
+states1 <- states %>% group_by(region) %>% summarize(long = mean(long), lat = mean(lat), group, region) %>% distinct()
+
+codes$`State Name` <- tolower(codes$`State Name`)
+codes <- codes %>% rename(region = `State Name`)
+
+codes <- codes %>% group_by(region) %>%
+  summarize(`State Code`) %>%
+  distinct() %>% filter(`State Code` != '01')
+
+code1 <- codes %>% left_join(states1, by = 'region') %>% 
+  select(region, `State Code`, long, lat, group) %>% 
+  distinct()
+
+code1 <- code1 %>% rename(STATE = `State Code`)
+make <- make %>% mutate(STATE = as.character(STATE))
+
+formap <- inner_join(code1, make, by = 'STATE') %>% na.omit()
+
+ggplot(states, aes(x=long, y=lat)) + geom_polygon(aes(group=group)) + 
+  geom_text(aes(label=MAKE), color = 'white', data=formap) + coord_map(xlim=c(-130, -60), ylim=c(20, 50))
+```
+
+## 5)  
+```{r}
+both <- left_join(pers, acc, by='ST_CASE')
+```
+
+## 6)  
+I found that for days of the week, Saturday and Sunday had the most accidents, for hour of the day the most accidents happened from hour 15-22 which would be from 3pm to 10pm, and for sex, males had a lot more accidents than female. So if you're a male driving on a Saturday at 6pm you may want to be careful!
+```{r}
+day <- acc %>% group_by(wday(DAY_WEEK, label = TRUE)) %>%
+  summarize(n())
+ggplot(day, aes(x=`wday(DAY_WEEK, label = TRUE)`, weight = `n()`)) + geom_bar() + xlab('Day of the week') +
+  ylab('Number of accidents')
+
+hour <- acc %>% group_by(HOUR) %>%
+  summarize(n()) %>% filter(HOUR != 99)
+ggplot(hour, aes(x=HOUR, weight = `n()`)) + geom_bar() + xlab('Hour of the day') +
+  ylab('Number of accidents')
+
+sex <- both %>% group_by(SEX) %>%
+  summarize(n()) %>% filter(SEX != 8 & SEX != 9)
+ggplot(sex, aes(x=SEX, weight = `n()`)) + geom_bar() + xlab('Sex: 1=Male, 2=Female') +
+  ylab('Number of accidents')
+```
+
+## 7)  
+The counties that had the most fatalities were in California or in a few southern states. Having the counties in California with high fatality numbers makes sense because California is so populated. 
+```{r}
+county <- map_data('county')
+
+death <- acc %>% group_by(COUNTY) %>% 
+  summarize(totDeath = sum(FATALS))
+
+county <- county %>% rename(COUNTY = group)
+
+dead <- left_join(county, death, by = 'COUNTY')
+
+dead$totDeath[is.na(dead$totDeath)] <- 0
+
+ggplot(dead, aes(x=long, y=lat, fill=totDeath, group = COUNTY)) +
+  geom_polygon(aes(group=COUNTY)) + coord_map()
+
+```
+
+## 8)  
+To find if summer or winter was more dangerous I decided to just tally up the accidents in the winter months and in the summer months. I used November through February for winter months and June through August for summer months. By the summary shown you can see that there was more accidents in the winter months and to see how that aligned with each state I made a true/false category to see which states had summer as their most dangerous state as seen below. The states that had summer as their most dangerous season was actually about half of them, 23 of them which surprised me. This info is in the info summary.
+```{r}
+weather <- acc %>% group_by(STATE, month(MONTH, label = TRUE)) %>%
+  summarize(tot = n()) %>% rename(month = `month(MONTH, label = TRUE)`)
+
+winter <- weather %>% filter(month == 'Jan' | month == 'Feb' | 
+                     month == 'Nov' | month == 'Dec')
+wint <- winter %>% group_by(STATE) %>%
+  summarize(wintsum = sum(tot))
+
+summer <- weather %>% filter(month == 'Jun' | month == 'Jul' | 
+                               month == 'Aug')
+summ <- summer %>% group_by(STATE) %>%
+  summarize(sumsum = sum(tot))
+
+
+all <- left_join(summ, wint, by = 'STATE')
+
+all1 <- all %>% pivot_longer(sumsum:wintsum, names_to = 'season', 
+                     values_to = 'sum')
+
+test <- all %>% group_by(STATE) %>%
+  summarize(stat = wintsum > sumsum)
+test2 <- test %>% filter(stat == FALSE)
+
+test2 <- test2 %>% mutate(STATE = as.character(STATE))
+info <- left_join(test2, code1, by = 'STATE') %>%
+  select(STATE, stat, region)
+
+all1 %>% group_by(season) %>%
+  summarize(sum(sum))
+info
+
+```
